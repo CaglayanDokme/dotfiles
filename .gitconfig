@@ -1,0 +1,14 @@
+# Indentation could be done with spaces instead of tabs, but Git natively uses tabs for indentation in config files.
+
+# Beware that hasConfig introduced in git 2.36 (Ubuntu 22.04 has git 2.34)
+# So, ~/.gitconfig-github will be included if the git version is 2.36 or higher, otherwise it will be ignored and the user will have to manually include it in ~/.gitconfig
+
+[user]
+	name = caglayandokme
+	email = caglayan.dokme@plan.space
+[includeIf "hasconfig:remote.*.url:https://github.com/**"]
+	path = ~/.gitconfig-github
+[includeIf "hasconfig:remote.*.url:git@github.com:*/**"]
+	path = ~/.gitconfig-github
+[includeIf "hasconfig:remote.*.url:ssh://git@github.com/**"]
+	path = ~/.gitconfig-github

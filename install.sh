@@ -1,0 +1,36 @@
+#!/bin/bash
+set -e
+
+if ! command -v stow &> /dev/null; then
+    echo "stow could not be found. Please install stow to use this script." >&2
+
+    exit 1
+fi
+
+if ! command -v git &> /dev/null; then
+    echo "git could not be found. Please install git to use this script." >&2
+
+    exit 1
+fi
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+if stow --adopt . > /dev/null; then
+    echo "Successfully stowed dotfiles."
+else
+    echo "Failed to stow dotfiles!" >&2
+    exit 1
+fi
+
+if git restore .; then
+    echo "Successfully restored .git directory."
+else
+    echo "Failed to restore .git directory!" >&2
+
+    exit 1
+fi
+
+echo "Dotfiles installation complete!"
+exit 0
+
+# For the origin of adopted approach, see https://www.reddit.com/r/linux4noobs/comments/b5ig2h/comment/igmv8pp/

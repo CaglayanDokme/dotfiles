@@ -22,6 +22,9 @@ if command -v zsh &> /dev/null; then
 
         echo "Installing Powerlevel10k theme.."
         git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${HOME}/.oh-my-zsh/custom/themes/powerlevel10k"
+
+        echo "Installing zsh-syntax-highlighting plugin.."
+        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting
     fi
 else
     echo "zsh could not be found, will not install zsh related tools." >&2

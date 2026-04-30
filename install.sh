@@ -13,6 +13,20 @@ if ! command -v git &> /dev/null; then
     exit 1
 fi
 
+if command -v zsh &> /dev/null; then
+    if ! command -v curl &> /dev/null; then
+        echo "curl could not be found. Please install curl to use zsh related tools." >&2
+    else
+        echo "Installing Oh My Zsh.."
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+
+        echo "Installing Powerlevel10k theme.."
+        git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${HOME}/.oh-my-zsh/custom/themes/powerlevel10k"
+    fi
+else
+    echo "zsh could not be found, will not install zsh related tools." >&2
+fi
+
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 if stow --adopt . > /dev/null; then

@@ -123,8 +123,8 @@ source "${HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-hig
 # See https://github.com/junegunn/fzf
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
-# Copilot CLI installation is at this path, but it doesn't add it to the PATH variable, so we need to do it manually
-export PATH="/home/caglayandokme/.local/bin:$PATH"
+# Some installations are at this path, but it wasn't added to the PATH variable, so we need to do it manually
+export PATH="${HOME}/.local/bin:$PATH"
 
 # Node Version Manager (NVM) installation is at this path. It creates this entries automatically
 # curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash

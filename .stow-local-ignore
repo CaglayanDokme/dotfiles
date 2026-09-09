@@ -1,1 +1,11 @@
+# NOTE: a .stow-local-ignore REPLACES stow's built-in ignore list rather than extending it
+# (see Stow.pm, get_ignore_regexps), so any default worth keeping has to be repeated here.
+# Without the .git entry below, stow links this repository's .git into $HOME and turns the
+# home directory into a working tree of these dotfiles.
+#
+# Patterns without a "/" are matched against whole path segments (compiled as ^(...)$), so
+# \.git matches only .git itself and leaves .gitconfig and .gitconfig-github to be stowed.
 install.sh
+\.git
+\.gitignore
+\.gitmodules

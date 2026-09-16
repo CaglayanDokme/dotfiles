@@ -1,14 +1,26 @@
 # Indentation could be done with spaces instead of tabs, but Git natively uses tabs for indentation in config files.
 
-# Beware that hasConfig introduced in git 2.36 (Ubuntu 22.04 has git 2.34)
-# So, ~/.gitconfig-github will be included if the git version is 2.36 or higher, otherwise it will be ignored and the user will have to manually include it in ~/.gitconfig
-
 [user]
-	name = caglayandokme
-	email = caglayan.dokme@plan.space
+	# Deliberately no name/email: a repo whose remote matches none of the rules below
+	# refuses to commit ("Author identity unknown") instead of guessing. Add the remote
+	# first, or set user.name/user.email in that repo explicitly.
+	useConfigOnly = true
+
+# Identity follows the remote URL. hasconfig: needs git >= 2.36 - install.sh upgrades
+# git where it is older (Ubuntu 22.04 ships 2.34), so these rules hold everywhere the
+# dotfiles are installed. On an un-upgraded old git they are ignored and, with
+# useConfigOnly, commits are refused rather than mis-attributed.
+
+# Company - Intechron Forgejo (add a line here if its URL scheme or port changes)
+[includeIf "hasconfig:remote.*.url:http://10.100.20.10:3000/**"]
+	path = ~/.gitconfig-work
+[includeIf "hasconfig:remote.*.url:ssh://git@10.100.20.10:2222/**"]
+	path = ~/.gitconfig-work
+
+# Personal - GitHub
 [includeIf "hasconfig:remote.*.url:https://github.com/**"]
-	path = ~/.gitconfig-github
+	path = ~/.gitconfig-personal
 [includeIf "hasconfig:remote.*.url:git@github.com:*/**"]
-	path = ~/.gitconfig-github
+	path = ~/.gitconfig-personal
 [includeIf "hasconfig:remote.*.url:ssh://git@github.com/**"]
-	path = ~/.gitconfig-github
+	path = ~/.gitconfig-personal

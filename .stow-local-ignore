@@ -4,7 +4,7 @@
 # home directory into a working tree of these dotfiles.
 #
 # Patterns without a "/" are matched against whole path segments (compiled as ^(...)$), so
-# \.git matches only .git itself and leaves .gitconfig and .gitconfig-github to be stowed.
+# \.git matches only .git itself and leaves .gitconfig, .gitconfig-personal and .gitconfig-work to be stowed.
 install.sh
 \.git
 \.gitignore

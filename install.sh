@@ -45,6 +45,36 @@ install_missing_tools() {
     fi
 }
 
+# .gitconfig selects the identity with includeIf "hasconfig:...", which needs git >= 2.36.
+# Ubuntu 22.04 ships 2.34 (e.g. the PetaLinux dev container): there the rules are silently
+# ignored and no identity is configured at all. Upgrade from the git-core PPA when we can.
+MIN_GIT_VERSION=2.36
+
+upgrade_old_git() {
+    local have
+    have="$(git --version | awk '{print $3}')"
+
+    # sort -V puts the smaller version first; if MIN is not the smaller one, we already have >= MIN.
+    if [[ "$(printf '%s\n%s\n' "${MIN_GIT_VERSION}" "${have}" | sort -V | head -1)" == "${MIN_GIT_VERSION}" ]]; then
+        return 0
+    fi
+
+    echo "git ${have} is older than ${MIN_GIT_VERSION}; upgrading from the git-core PPA.."
+
+    if ! command -v apt-get &> /dev/null || ! sudo -n true &> /dev/null; then
+        warn "Cannot upgrade git here (no apt-get or no passwordless sudo); do it manually:"
+        warn "  sudo add-apt-repository -y ppa:git-core/ppa && sudo apt-get install -y git"
+
+        return 0
+    fi
+
+    sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends software-properties-common \
+        && sudo -n add-apt-repository -y ppa:git-core/ppa \
+        && sudo -n apt-get update -qq \
+        && sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git \
+        || warn "git upgrade failed; identity rules will not apply until git >= ${MIN_GIT_VERSION}."
+}
+
 # The dev container image no longer sets a login shell for us, and the Oh My Zsh installer is run
 # with --unattended below, which suppresses its own chsh. So do it here, for this account only.
 # Plain chsh cannot work where the account has no password (PAM rejects it), hence sudo.
@@ -62,6 +92,7 @@ use_zsh_as_login_shell() {
 }
 
 install_missing_tools
+upgrade_old_git
 
 if ! command -v stow &> /dev/null; then
     echo "stow could not be found. Please install stow to use this script." >&2

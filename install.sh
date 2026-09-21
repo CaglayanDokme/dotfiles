@@ -51,7 +51,7 @@ install_missing_tools() {
 MIN_GIT_VERSION=2.36
 
 upgrade_old_git() {
-    local have
+    local have arch codename ppa_list
     have="$(git --version | awk '{print $3}')"
 
     # sort -V puts the smaller version first; if MIN is not the smaller one, we already have >= MIN.
@@ -68,11 +68,31 @@ upgrade_old_git() {
         return 0
     fi
 
+    # add-apt-repository imports the PPA key for us, but the source line it writes is not restricted
+    # to an architecture. On an image with a foreign architecture enabled (e.g. the PetaLinux container
+    # adds i386 for the Xilinx tools) apt then also requests the PPA's i386 index, Launchpad answers
+    # 503, and apt drops the whole PPA - while apt-get update still exits 0 and git stays old.
+    # So we own the source line: pinned to the native architecture and rewritten on every run
+    # (add-apt-repository would otherwise append a second, unpinned line on each rerun).
+    arch="$(dpkg --print-architecture)"
+    codename="$(. /etc/os-release && echo "${VERSION_CODENAME}")"
+    ppa_list="/etc/apt/sources.list.d/git-core-ubuntu-ppa-${codename}.list"
+
     sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends software-properties-common \
-        && sudo -n add-apt-repository -y ppa:git-core/ppa \
+        && sudo -n add-apt-repository -y -n ppa:git-core/ppa \
+        && echo "deb [arch=${arch}] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu ${codename} main" \
+            | sudo -n tee "${ppa_list}" > /dev/null \
         && sudo -n apt-get update -qq \
         && sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends git \
         || warn "git upgrade failed; identity rules will not apply until git >= ${MIN_GIT_VERSION}."
+
+    # apt-get update only warns when it drops a repository, and apt-get install is content with the
+    # version already installed, so the chain above cannot detect a silent no-op. Verify the result.
+    have="$(git --version | awk '{print $3}')"
+
+    if [[ "$(printf '%s\n%s\n' "${MIN_GIT_VERSION}" "${have}" | sort -V | head -1)" != "${MIN_GIT_VERSION}" ]]; then
+        warn "git is still ${have} after the upgrade attempt; identity rules will not apply until git >= ${MIN_GIT_VERSION}."
+    fi
 }
 
 # The dev container image no longer sets a login shell for us, and the Oh My Zsh installer is run

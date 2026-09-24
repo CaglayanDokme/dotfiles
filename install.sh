@@ -111,6 +111,21 @@ use_zsh_as_login_shell() {
     fi
 }
 
+# git clone refuses an existing, non-empty destination (exit 128). Under set -e that ended
+# every rerun before stow, so nothing added to the repo later was ever linked.
+clone_if_missing() {
+    local repo="$1" dest="$2"
+    shift 2
+
+    if [[ -d "${dest}" ]]; then
+        echo "${dest} already exists; skipping clone."
+
+        return 0
+    fi
+
+    git clone "$@" "${repo}" "${dest}"
+}
+
 install_missing_tools
 upgrade_old_git
 
@@ -132,20 +147,31 @@ if command -v zsh &> /dev/null; then
     if ! command -v curl &> /dev/null; then
         echo "curl could not be found. Please install curl to use zsh related tools." >&2
     else
-        echo "Installing Oh My Zsh.."
-        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+        # The Oh My Zsh installer exits 1 when its folder already exists, which under set -e
+        # ended every rerun right here, before stow. Skip it once installed.
+        if [[ -d "${HOME}/.oh-my-zsh" ]]; then
+            echo "Oh My Zsh is already installed."
+        else
+            echo "Installing Oh My Zsh.."
+            sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+        fi
 
         echo "Installing Powerlevel10k theme.."
-        git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${HOME}/.oh-my-zsh/custom/themes/powerlevel10k"
+        clone_if_missing https://github.com/romkatv/powerlevel10k.git "${HOME}/.oh-my-zsh/custom/themes/powerlevel10k" --depth=1
 
         echo "Installing zsh-syntax-highlighting plugin.."
-        git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+        clone_if_missing https://github.com/zsh-users/zsh-syntax-highlighting.git "${HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
         echo "Installing zsh-autosuggestions plugin.."
-        git clone https://github.com/zsh-users/zsh-autosuggestions.git "${HOME}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+        clone_if_missing https://github.com/zsh-users/zsh-autosuggestions.git "${HOME}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
 
-        echo "Installing fzf.."
-        git clone --depth 1 https://github.com/junegunn/fzf.git "${HOME}/.fzf" && yes | "${HOME}/.fzf/install"
+        # The install step only wires up a fresh checkout; on a rerun ~/.fzf/bin is already there.
+        if [[ -d "${HOME}/.fzf" ]]; then
+            echo "fzf is already installed."
+        else
+            echo "Installing fzf.."
+            git clone --depth 1 https://github.com/junegunn/fzf.git "${HOME}/.fzf" && yes | "${HOME}/.fzf/install"
+        fi
     fi
 else
     echo "zsh could not be found, will not install zsh related tools." >&2
@@ -153,9 +179,19 @@ fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-# ssh refuses a group-writable config and sshd a group-writable ~/.ssh (umask here is 002).
+# stow --adopt moves colliding files from $HOME into this repo and the git restore below puts
+# the committed versions back - of EVERY tracked file, not just the adopted ones. Unstaged
+# edits in this repo (this script included) would be discarded silently, so refuse to run.
+if ! git diff --quiet; then
+    echo "Unstaged changes in $(pwd) would be discarded by the stow/restore step; commit or stash them first:" >&2
+    git diff --stat >&2
+
+    exit 1
+fi
+
+# sshd refuses a group-writable ~/.ssh (umask here is 002). Created before stow so that
+# --no-folding finds a real directory to link into; the config mode is fixed after stow below.
 mkdir -m 700 -p "${HOME}/.ssh"
-chmod 600 .ssh/config
 
 if stow --adopt --no-folding . > /dev/null; then
     echo "Successfully stowed dotfiles."
@@ -171,6 +207,11 @@ else
 
     exit 1
 fi
+
+# ssh refuses a group-writable config. This has to come last: stow --adopt moves an existing
+# ~/.ssh/config into the repo with its old mode, and git restore recreates the file with the
+# umask (002 here, so 664). Only once both are done does the mode stick.
+chmod 600 .ssh/config
 
 echo "Dotfiles installation complete!"
 exit 0

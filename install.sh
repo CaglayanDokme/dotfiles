@@ -141,6 +141,9 @@ if command -v zsh &> /dev/null; then
         echo "Installing zsh-syntax-highlighting plugin.."
         git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${HOME}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
+        echo "Installing zsh-autosuggestions plugin.."
+        git clone https://github.com/zsh-users/zsh-autosuggestions.git "${HOME}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+
         echo "Installing fzf.."
         git clone --depth 1 https://github.com/junegunn/fzf.git "${HOME}/.fzf" && yes | "${HOME}/.fzf/install"
     fi
@@ -150,7 +153,11 @@ fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-if stow --adopt . > /dev/null; then
+# ssh refuses a group-writable config and sshd a group-writable ~/.ssh (umask here is 002).
+mkdir -m 700 -p "${HOME}/.ssh"
+chmod 600 .ssh/config
+
+if stow --adopt --no-folding . > /dev/null; then
     echo "Successfully stowed dotfiles."
 else
     echo "Failed to stow dotfiles!" >&2

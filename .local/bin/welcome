@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# welcome -- one-screen host summary for interactive SSH logins on a Docker dev box.
+#
+# ~/.zprofile runs `welcome --login` (all login guards live there); type `welcome`
+# at any time to see it again.  This file lives in a public dotfiles repo, so
+# nothing host-specific is hard-coded: everything is discovered at run time.
+#
+# Rules: ASCII only, <= 80 columns, about 16 lines, no `set -e` (every external
+# call is bounded and degrades to a short note), and never touch /tools -- an
+# NFS hard mount whose stat() blocks while its server is down.
+set -u
+
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/welcome"
+LAST_LOGIN_FILE="$CACHE_DIR/last-login"      # "<date -Is> <client ip>" of the last --login run
+STORAGE_CACHE="$CACHE_DIR/docker-storage"    # two pre-rendered lines from `docker system df`
+STORAGE_MAX_AGE=600                          # seconds; older -> refreshed in the background
+WORKSPACES="$HOME/workspaces"                # depth-1 git repos below here are checked
+EXTRA_REPOS=("$HOME/.dotfiles")
+DOCKER_TIMEOUT=2                             # seconds, foreground docker call
+
+MODE=show REFRESH=1
+for arg in "$@"; do
+  case $arg in
+    --login)           MODE=login ;;    # also record this login for the next banner
+    --refresh-storage) MODE=refresh ;;  # internal: detached cache writer
+    --no-refresh)      REFRESH=0 ;;     # tests: never spawn the detached writer
+    -h|--help)         echo "usage: welcome [--login] [--no-refresh]"; exit 0 ;;
+    *) echo "welcome: unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -t 1 && -z ${NO_COLOR-} && ${TERM-} != dumb ]]; then
+  B=$'\e[1m' D=$'\e[2m' R=$'\e[31m' G=$'\e[32m' Y=$'\e[33m' N=$'\e[0m'
+else
+  B='' D='' R='' G='' Y='' N=''
+fi
+
+# bounded SECONDS CMD...: like `timeout SECONDS CMD` (124 on expiry, the child's
+# status otherwise, stderr dropped) but via perl: the uutils `timeout` shipped by
+# Ubuntu 25.10+ polls its child every 100 ms and would add ~1 s to this script.
+bounded() {
+  local s=$1; shift
+  perl -e '$t = shift; $p = fork // exit 127;
+           exec @ARGV or exit 127 if !$p;
+           $SIG{ALRM} = sub { kill TERM => $p; waitpid $p, 0; exit 124 };
+           alarm $t; waitpid $p, 0; my $st = $?;
+           exit(($st & 127) ? 128 + ($st & 127) : $st >> 8)' "$s" "$@" 2>/dev/null
+}
+attn() { printf '%s! %s%s\n' "$1" "$2" "$N"; }
+
+# ---- background mode: rewrite the storage cache (docker system df takes 0.6 s) --
+refresh_storage() {
+  mkdir -p "$CACHE_DIR" || exit 1
+  exec 9>"$CACHE_DIR/.lock"; flock -n 9 || exit 0          # one writer at a time
+  local df dangling
+  df=$(bounded 20 docker system df --format \
+        '{{.Type}}\t{{.TotalCount}}\t{{.Active}}\t{{.Size}}\t{{.Reclaimable}}') || exit 1
+  dangling=$(bounded 10 docker images -qf dangling=true | wc -l)
+  awk -F'\t' -v dg="$dangling" '
+    { n[$1] = $2; sz[$1] = $4; split($5, r, " "); rc[$1] = r[1] }
+    END {
+      printf "%s images %s (%s dangling), %s ctrs %s, %s vols %s\n",
+        n["Images"], sz["Images"], dg, n["Containers"], sz["Containers"],
+        n["Local Volumes"], sz["Local Volumes"]
+      printf "build cache %s (%s reclaimable)\n", sz["Build Cache"], rc["Build Cache"]
+    }' <<<"$df" >"$STORAGE_CACHE.tmp" && mv -f "$STORAGE_CACHE.tmp" "$STORAGE_CACHE"
+}
+if [[ $MODE == refresh ]]; then refresh_storage; exit 0; fi
+
+# ---- header ----------------------------------------------------------------------
+host=$(hostname -s 2>/dev/null || echo "${HOSTNAME:-?}")
+ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+os=$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Linux}")
+kern=$(uname -r)
+up=$(uptime -p 2>/dev/null | cut -d, -f1-2)
+read -r load _ </proc/loadavg
+cpus=$(nproc 2>/dev/null || echo '?')
+read -r mem swap_mb < <(free -m | awk '
+  /^Mem:/  { m = sprintf("%.1f/%.1fG", $3 / 1024, $2 / 1024) }
+  /^Swap:/ { s = $3 }
+  END      { print m, s + 0 }')
+swap=''; (( swap_mb > 0 )) && swap="  swap ${swap_mb}M"
+root=$(df -P / 2>/dev/null | awk 'NR == 2 { printf "%.0f/%.0fG (%s)", $3 / 1048576, $2 / 1048576, $5 }')
+printf '%s%s%s%s  %s  %s\n' "$B" "$host" "$N" "${ip:+ ($ip)}" "$os" "$kern"
+printf '%s  load %s/%s  mem %s%s  root %s\n' "$up" "$load" "$cpus" "$mem" "$swap" "$root"
+
+# ---- attention lines, only when applicable ---------------------------------------
+if [[ -e /var/run/reboot-required ]]; then
+  since=$(date -d "@$(stat -c %Y /var/run/reboot-required)" +%Y-%m-%d 2>/dev/null)
+  pkgs=$(tr '\n' ' ' </var/run/reboot-required.pkgs 2>/dev/null); pkgs=${pkgs% }
+  attn "$R" "reboot required since ${since:-?}${pkgs:+ (${pkgs:0:40})}"
+fi
+ua=/var/lib/update-notifier/updates-available
+if [[ -r $ua ]]; then
+  upd=$(grep -m1 -oE '^[0-9]+ (updates?|packages?) can be' "$ua" | grep -oE '^[0-9]+')
+  sec=$(grep -m1 -oE '^[0-9]+ of these updates? (is|are)' "$ua" | grep -oE '^[0-9]+')
+  (( ${upd:-0} > 0 )) && attn "$Y" "${upd} updates pending${sec:+ (${sec} security)} - apt list --upgradable"
+fi
+[[ $(bounded 1 timedatectl show -p NTPSynchronized --value) == no ]] &&
+  attn "$Y" "clock not NTP-synchronised - timedatectl status"
+rel=/var/lib/ubuntu-release-upgrader/release-upgrade-available
+[[ -s $rel ]] && attn "$Y" "$(head -1 "$rel")"
+
+# ---- last login (own bookkeeping: sshd's line is hushed and lastlog already holds
+#      THIS login by the time the shell starts) and session counts -----------------
+ts='' from='' last='none recorded yet'
+if [[ -r $LAST_LOGIN_FILE ]] && read -r ts from <"$LAST_LOGIN_FILE" && [[ -n $ts ]]; then
+  when=$(date -d "$ts" '+%Y-%m-%d %H:%M %Z' 2>/dev/null) || when=$ts
+  last="$when from ${from:-?}"
+fi
+uid=$(id -u)
+# logind reports TTY "-" for sshd sessions, so count distinct ptys running a login shell
+shells=$(ps -u "$uid" -o tty= -o args= 2>/dev/null |
+  awk '$1 ~ /^pts/ && $2 ~ /^-(zsh|bash|sh)$/ { t[$1] = 1 } END { n = 0; for (k in t) n++; print n }')
+vscode=$(pgrep -u "$uid" -fc '[.]vscode-server/code-[0-9a-f]+ command-shell' 2>/dev/null)
+tmuxn=$(bounded 1 tmux ls | wc -l)
+sess=$(bounded 1 loginctl show-user "$uid" -p Sessions --value); states=''
+# shellcheck disable=SC2086  # $sess is a space-separated id list; splitting intended
+[[ -n $sess ]] && states=$(bounded 1 loginctl show-session $sess -p State --value)
+logind=$(grep -c . <<<"$states"); closing=$(grep -c '^closing' <<<"$states")
+cl=''; (( closing > 0 )) && cl=" (${closing} closing)"
+printf 'last login: %s\n' "$last"
+printf 'sessions: %s shells, %s vscode, %s tmux; logind %s%s\n' \
+  "${shells:-?}" "${vscode:-0}" "$tmuxn" "$logind" "$cl"
+
+# ---- dev containers (VS Code names them randomly; the project is in a label) -----
+fmt='{{.Names}}\t{{.Label "devcontainer.local_folder"}}\t{{.State}}\t{{.Status}}\t{{.Image}}'
+docker_ok=0
+if rows=$(bounded "$DOCKER_TIMEOUT" docker ps -a --format "$fmt"); then
+  docker_ok=1
+  if [[ -z $rows ]]; then
+    echo 'dev containers: none'
+  else
+    printf 'dev containers (%s):\n' "$(grep -c . <<<"$rows")"
+    # running first (State sorts reverse-alphabetically), then by project folder
+    sort -t $'\t' -k3,3r -k2,2 <<<"$rows" |
+    while IFS=$'\t' read -r name folder state status image; do
+      proj=${folder##*/}; proj=${proj:-$name}
+      (( ${#proj} > 37 )) && proj="${proj:0:36}~"
+      case $state in
+        running) col=$G st=up ;;
+        exited)  col=$R st=down ;;
+        *)       col=$Y st=${state:0:4} ;;
+      esac
+      status=$(sed -E 's/About an hour/1 hour/; s/About a minute/1 minute/;
+        s/Less than a second/0 seconds/; s/ ago$//; s/^Up /up /;
+        s/^Exited \(([0-9]+)\) /exit \1 /; s/^Restarting \(([0-9]+)\) /restart \1 /;
+        s/ seconds?/s/; s/ minutes?/m/; s/ hours?/h/; s/ days?/d/; s/ weeks?/w/;
+        s/ months?/mo/; s/ years?/y/; s/^(Created|Paused|Dead)/\L\1/' <<<"$status")
+      # the stock dev-container image is vsc-<folder>-<64 hex>[-uid] and says nothing
+      # the project column does not; only other images are shown
+      img=''; [[ $image =~ ^vsc-.*-[0-9a-f]{64}(-uid)?$ ]] || img="  ${D}${image}${N}"
+      printf '  %s%-4s%s  %-37s  %-16s  %s%s\n' "$col" "$st" "$N" "$proj" "$name" "$status" "$img"
+    done
+  fi
+else
+  printf '%sdocker: unavailable%s\n' "$Y" "$N"
+fi
+
+# ---- storage, from the cache the detached writer maintains -----------------------
+if (( docker_ok )); then
+  age=$STORAGE_MAX_AGE
+  if [[ -s $STORAGE_CACHE ]]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$STORAGE_CACHE") ))
+    { read -r s1; read -r s2; } <"$STORAGE_CACHE"
+    if (( age < 120 )); then agestr='just now'
+    elif (( age < 3600 )); then agestr="$(( age / 60 ))m ago"
+    else agestr="$(( age / 3600 ))h ago"; fi
+    printf 'storage: %s\n         %s  %s[df %s]%s\n' "$s1" "$s2" "$D" "$agestr" "$N"
+  else
+    printf 'storage: %s(collecting docker system df in the background)%s\n' "$D" "$N"
+  fi
+  if (( REFRESH && age >= STORAGE_MAX_AGE )); then
+    setsid -f bash "${BASH_SOURCE[0]}" --refresh-storage </dev/null >/dev/null 2>&1
+  fi
+fi
+
+# ---- dirty git repos: ~/workspaces/* (depth 1) and the dotfiles, in parallel ------
+dirty=$(
+  for d in "$WORKSPACES"/*/ "${EXTRA_REPOS[@]}"; do
+    d=${d%/}; [[ -d $d/.git ]] || continue
+    {
+      f=$(bounded 1 git --no-optional-locks -C "$d" status --porcelain --untracked-files=normal |
+          awk '/^\?\?/ { u = 1; next } { m = 1 } END { printf "%s%s", (m ? "M" : ""), (u ? "?" : "") }')
+      [[ -n $f ]] && printf '%s (%s)\n' "${d##*/}" "$f"
+    } &
+  done
+  wait
+)
+[[ -n $dirty ]] && printf 'dirty: %s\n' "$(sort <<<"$dirty" | paste -sd, | sed 's/,/, /g')" | fold -s -w 80
+
+# ---- hint --------------------------------------------------------------------------
+(( tmuxn == 0 )) && printf '%shint: tmux new -As main%s\n' "$D" "$N"
+
+# ---- remember this login for the next banner (only when called from .zprofile) ----
+if [[ $MODE == login ]]; then
+  from=${SSH_CONNECTION-}; from=${from%% *}
+  mkdir -p "$CACHE_DIR" 2>/dev/null &&
+    printf '%s %s\n' "$(date -Is)" "${from:-?}" >"$LAST_LOGIN_FILE.tmp" 2>/dev/null &&
+    mv -f "$LAST_LOGIN_FILE.tmp" "$LAST_LOGIN_FILE" 2>/dev/null
+fi
+exit 0

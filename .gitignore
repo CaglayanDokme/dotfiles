@@ -1,0 +1,3 @@
+# Never version anything under .ssh except the generic config
+.ssh/*
+!.ssh/config

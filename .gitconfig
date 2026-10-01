@@ -12,9 +12,13 @@
 # useConfigOnly, commits are refused rather than mis-attributed.
 
 # Company - Intechron Forgejo (add a line here if its URL scheme or port changes)
-[includeIf "hasconfig:remote.*.url:http://10.100.20.10:3000/**"]
+[includeIf "hasconfig:remote.*.url:http://git.intechron.com.tr/**"]
 	path = ~/.gitconfig-work
-[includeIf "hasconfig:remote.*.url:ssh://git@10.100.20.10:2222/**"]
+[includeIf "hasconfig:remote.*.url:https://git.intechron.com.tr/**"]
+	path = ~/.gitconfig-work
+[includeIf "hasconfig:remote.*.url:ssh://git@git.intechron.com.tr:2222/**"]
+	path = ~/.gitconfig-work
+[includeIf "hasconfig:remote.*.url:git@git.intechron.com.tr:*/**"]
 	path = ~/.gitconfig-work
 
 # Personal - GitHub

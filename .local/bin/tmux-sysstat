@@ -1,0 +1,39 @@
+#!/bin/sh
+# CPU and RAM usage for the tmux status line: prints e.g. "CPU 7% RAM 11GB/15GB".
+# Called from status-right every status-interval. CPU is the busy share since the previous call
+# (previous /proc/stat totals kept in a per-user file in $XDG_RUNTIME_DIR), so the first call
+# after boot shows the average since boot. RAM used = MemTotal - MemAvailable (cache not counted),
+# in GiB rounded to whole numbers; MemTotal is what the kernel can use, a bit below installed RAM.
+# Above 80% (of CPU, or of RAM used) a value turns orange, above 90% red.
+
+state="${XDG_RUNTIME_DIR:-/tmp}/tmux-sysstat.$(id -u)"
+
+# shellcheck disable=SC2034
+read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
+total=$((user + nice + system + idle + iowait + irq + softirq + steal))
+idle_all=$((idle + iowait))
+
+prev_total=0 prev_idle=0
+[ -r "$state" ] && read -r prev_total prev_idle < "$state"
+echo "$total $idle_all" > "$state"
+
+dt=$((total - prev_total))
+di=$((idle_all - prev_idle))
+cpu=0
+[ "$dt" -gt 0 ] && cpu=$(( (100 * (dt - di) + dt / 2) / dt ))
+
+# "<percent used> <used GiB> <total GiB>"
+read -r ram_pct ram_used ram_total <<EOF
+$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2}
+       END {g = 1048576; printf "%d %d %d", (100 * (t - a) + t / 2) / t, (t - a) / g + 0.5, t / g + 0.5}' /proc/meminfo)
+EOF
+
+# color <percent> <text>
+color() {
+    if   [ "$1" -gt 90 ]; then printf '#[fg=colour196,bold]%s#[default]' "$2"
+    elif [ "$1" -gt 80 ]; then printf '#[fg=colour214]%s#[default]' "$2"
+    else printf '%s' "$2"
+    fi
+}
+
+printf 'CPU %s RAM %s' "$(color "$cpu" "${cpu}%")" "$(color "$ram_pct" "${ram_used}GB/${ram_total}GB")"

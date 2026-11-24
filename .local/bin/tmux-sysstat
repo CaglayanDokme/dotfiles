@@ -1,26 +1,31 @@
 #!/bin/sh
-# CPU and RAM usage for the tmux status line: prints e.g. "CPU 7% RAM 11GB/15GB".
+# CPU and RAM usage for the tmux status line: prints e.g. "CPU 7% RAM 11GB/15GB", or
+# "CPU 45% (2/8 over 80%) RAM 11GB/15GB" while some cores are above 80%.
 # Called from status-right every status-interval. CPU is the busy share since the previous call
-# (previous /proc/stat totals kept in a per-user file in $XDG_RUNTIME_DIR), so the first call
-# after boot shows the average since boot. RAM used = MemTotal - MemAvailable (cache not counted),
+# (previous /proc/stat totals, overall and per core, kept in a per-user file in $XDG_RUNTIME_DIR),
+# so the first call after boot shows the average since boot. RAM used = MemTotal - MemAvailable (cache not counted),
 # in GiB rounded to whole numbers; MemTotal is what the kernel can use, a bit below installed RAM.
 # Above 80% (of CPU, or of RAM used) a value turns orange, above 90% red.
 
 state="${XDG_RUNTIME_DIR:-/tmp}/tmux-sysstat.$(id -u)"
 
-# shellcheck disable=SC2034
-read -r _ user nice system idle iowait irq softirq steal _ < /proc/stat
-total=$((user + nice + system + idle + iowait + irq + softirq + steal))
-idle_all=$((idle + iowait))
-
-prev_total=0 prev_idle=0
-[ -r "$state" ] && read -r prev_total prev_idle < "$state"
-echo "$total $idle_all" > "$state"
-
-dt=$((total - prev_total))
-di=$((idle_all - prev_idle))
-cpu=0
-[ "$dt" -gt 0 ] && cpu=$(( (100 * (dt - di) + dt / 2) / dt ))
+# "<overall CPU percent> <cores above 80%> <core count>". The state file holds one
+# "<name> <total> <idle>" line per cpu line of /proc/stat; a name missing from it counts from zero.
+: >> "$state"
+read -r cpu hot ncores <<EOF
+$(awk -v state="$state" '
+    FILENAME == state { pt[$1] = $2; pi[$1] = $3; next }
+    /^cpu/ {
+        t = $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9; i = $5 + $6
+        printf "%s %.0f %.0f\n", $1, t, i > state ".new"
+        dt = t - pt[$1]; di = i - pi[$1]
+        pct = dt > 0 ? int((100 * (dt - di) + dt / 2) / dt) : 0
+        if ($1 == "cpu") all = pct
+        else { n++; if (pct > 80) h++ }
+    }
+    END { printf "%d %d %d", all, h, n }' "$state" /proc/stat 2>/dev/null)
+EOF
+mv -f "$state.new" "$state"
 
 # "<percent used> <used GiB> <total GiB>"
 read -r ram_pct ram_used ram_total <<EOF
@@ -36,4 +41,7 @@ color() {
     fi
 }
 
-printf 'CPU %s RAM %s' "$(color "$cpu" "${cpu}%")" "$(color "$ram_pct" "${ram_used}GB/${ram_total}GB")"
+cores=""
+[ "$hot" -gt 0 ] && cores=" (${hot}/${ncores} over 80%)"
+
+printf 'CPU %s%s RAM %s' "$(color "$cpu" "${cpu}%")" "$cores" "$(color "$ram_pct" "${ram_used}GB/${ram_total}GB")"
